@@ -8,7 +8,7 @@ Create text files with every combination of individuals as separate documents. T
 "results_individuals_1-2-3-4-5-6-7.txt".
 
 ```{r}
-individual_path = '/Users/anjawu/Code/msc_dssai_thesis/individuals/'
+individual_path = '/Users/anjawu/Code/msc-dsaai_thesis_work/individuals/'
 path_to_results = paste0(individual_path, 'individual_results/')
 
 participant_names = list('1', '2', '3', '4', '5', '6', '7')

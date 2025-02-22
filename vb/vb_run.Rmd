@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Import Functions
 ```{r variables_and_import_functions}
 ## Global Pathways ##
-thesis_path = "/Users/anjawu/Code/msc_dssai_thesis/"
+thesis_path = "/Users/anjawu/Code/msc-dsaai_thesis_work/"
 vb_files_path = paste0(thesis_path, "vb/")
 mcmc_summary_path = paste0(vb_files_path, "MCMC_output/summary/")
 individual_results_path = paste0(thesis_path, "individuals/")
