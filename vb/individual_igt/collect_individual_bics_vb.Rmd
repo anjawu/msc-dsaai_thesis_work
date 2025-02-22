@@ -1,0 +1,150 @@
+---
+title: "Collecting Individual BICs"
+output: html_document
+date: "2025-01-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Library # Global Variables
+
+```{r library_and_global_var}
+library(MASS) 
+library(reshape2) 
+
+vb_files_path = "/Users/anjawu/Code/msc_dssai_thesis/vb/"
+summary_path = paste0(vb_files_path, 'MCMC_output/summary/')
+
+model_names <- c('pvl_delta', 'orl', 'vpp')
+N <- 7
+
+# Create combinations of all individuals without repetition
+participant_numbers <- 1:N
+subgroups <- unlist(lapply(1:N, function(n) combn(participant_numbers, n, simplify = FALSE)), recursive = FALSE)
+```
+
+# Functions
+
+Individual BIC calculator
+```{r bic_function}
+### BIC(individual | model) = -2 \cdot loglikelihood + p \cdot log(n)
+# where p is the number of parameters and n is the number of participants.
+bic_indiv_calc_fn <- function(log_lik, n, n_parms) {
+  individual = -2*log_lik
+  penalty = n_parms*log(n)
+  bic_individual = individual + penalty
+  return(bic_individual)
+}
+
+```
+
+
+# Collect all individual BIC
+
+Here is a process to amalgamate all BIC scores per individuals in dataframes
+
+```{r collect_bic}
+# create dataframe storage for each individual that has columns as model, rows as subgroups, and values as individual BIC score:
+individuals_bic_df <- vector("list", N)
+for (i in 1:N) {
+  individuals_bic_df[[i]] <- data.frame(
+    subgroup = character(0),
+    matrix(NA, nrow = 0, ncol = length(model_names),
+           dimnames = list(NULL, model_names))
+  )
+}
+
+for (subgroup in subgroups[8:length(subgroups)]) { 
+  print(subgroup)
+  # collapse numbers of individuals to be able to call the specific set of results
+  individuals <- paste(subgroup, collapse = "")
+  N_new <- length(subgroup)
+  
+  for (m in 1:length(model_names)) {
+    # create temporary <model> df to access individual values
+    temp_model_df <- readRDS(file = paste0(summary_path, "merged_output_from_BEST_igt_subgroup_", individuals,"_igt_", model_names[m], "_sigmainvgam_top15.rds"))
+    
+    # this summary accesses the mean and standard deviation for each parameter both population and individual parameters
+    fit_summary <- rstan::summary(temp_model_df$fit)$summary
+    # print(fit_summary)
+    # Get a parameters list based on the model examined; exclude the subjID
+    parameter_names_list <- colnames(temp_model_df$allIndPars)[2:ncol(temp_model_df$allIndPars)]
+    
+    # Now we cycle through each individual
+    # Calculate BIC scores for each individual in the subgroup
+    for (i in 1:N_new) {
+      individual_id <- subgroup[i]
+      
+      individual_log_lik <- fit_summary[paste0('log_lik[', i, ']'), 'mean']
+      individual_bic <- bic_indiv_calc_fn(individual_log_lik, 100, length(parameter_names_list))
+      
+      # Check if row for the subgroup already exists in the individual's dataframe
+      if (!(individuals %in% individuals_bic_df[[individual_id]]$subgroup)) {
+        # Add a new row with subgroup name and initialize columns
+        new_row <- data.frame(
+          subgroup = individuals,
+          matrix(NA, nrow = 1, ncol = length(model_names),
+                 dimnames = list(NULL, model_names))
+        )
+        individuals_bic_df[[individual_id]] <- rbind(individuals_bic_df[[individual_id]], new_row)
+      }
+      
+      # Assign the BIC score to the appropriate column
+      individuals_bic_df[[individual_id]][individuals_bic_df[[individual_id]]$subgroup == individuals, model_names[m]] <- individual_bic
+    }
+  }
+}
+```
+
+
+## Save BIC values/Read back results
+
+```{r save_bic}
+# save:
+# for (i in 1:N) {
+#   saveRDS(individuals_bic_df[[i]], file = paste0(vb_files_path, "individual_bic_scores/individual_", i, "_bic_df.rds"))
+# }
+
+# Read back info:
+for (i in 1:N) {
+  individuals_bic_df[[i]] <- readRDS(paste0(vb_files_path, "individual_bic_scores/individual_", i, "_bic_df.rds"))
+}
+```
+
+
+# Boxplot for each individual
+
+```{r boxplots}
+plot_path <- paste0(vb_files_path, 'individual_bic_scores/boxplots/')
+
+for (i in 1:N) {
+  p <- individuals_bic_df[[i]] |> 
+                      melt(id = 'subgroup', variable.name = 'model', value.name = 'bic')|> 
+                      ggplot(aes(x=model, y=bic)) + 
+                        geom_boxplot() +
+                        labs(title=paste0("Distribution of Individual ", i, " BIC Scores by Model"), x="Model Name", y = "Individual BIC Score") +
+    scale_x_discrete(labels=c("PVL Delta","ORL","VPP"))
+                                                              
+  # ggsave(paste0(plot_path, 'boxplot_for_individual', i, '.png'))
+  print(p)
+}
+
+```
+
+# Conclusions for each individual:
+
+1) Best fit is ORL
+2) Best fit is ORL
+3) Equivalent fit for PVL Delta and VPP
+4) Best fit is PVL Delta
+5) Best fit is PVL Delta
+6) Best fit is ORL
+7) Best fit is ORL, but has a slight overlap with PVL Delta
+
+
+## Overall from the box plot:
+ORL: 1 2 6 7
+PVL Delta: 4 5
+VPP: 3 (or could be PVL)

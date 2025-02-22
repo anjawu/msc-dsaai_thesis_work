@@ -1,0 +1,96 @@
+---
+title: "Variation Bayes Approach"
+output: html_document
+date: "2025-02-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Import Functions
+```{r variables_and_import_functions}
+## Global Pathways ##
+thesis_path = "/Users/anjawu/Code/msc_dssai_thesis/"
+vb_files_path = paste0(thesis_path, "vb/")
+mcmc_summary_path = paste0(vb_files_path, "MCMC_output/summary/")
+individual_results_path = paste0(thesis_path, "individuals/")
+data_files_path = paste0(individual_results_path, "results_combined_text_files/")
+
+# all model names
+model_names <- c("vpp", "orl", "pvl_delta")
+
+source(paste0(vb_files_path, "vb_functions.R"))
+```
+
+
+# Run MCMC based on Data
+All the IGT results must be run through MCMC to get the initial estimates of the population-level and individual-level parameters. This can be done with a single file, or can be parallelized to complete many files - this is for use cases of wanted to compare placements across different groupings. 
+
+The results are saved in a folder "MCMC_output".
+
+## Single file run:
+```{r single_mcmc_run}
+### This is the original run for just one file:
+file_name = "results_individuals_1-2-3-4-5-6-7.txt"
+# Run just for one file:
+run_MCMC_function(vb_files_path, data_files_path, file_name)
+```
+
+## Multiple file runs:
+```{r parallel_mcmc_runs_all_combos}
+### This is a parallel process for doing all possible combinations of individuals (1-7)
+# create automated process that takes in the folder location of results and takes all .txt files and inputs those as file_names in the above function:
+file_to_use = list.files(paste0(vb_files_path, data_files_path), full.names = FALSE)
+print(file_to_use)
+
+# Setting up CPU clustering: using https://gradientdescending.com/simple-parallel-processing-in-r/ and https://stackoverflow.com/questions/17196261/understanding-the-differences-between-mclapply-and-parlapply-in-r
+num_cores <- 12
+clust <- makeCluster(num_cores)
+clusterExport(clust, varlist = c("file_to_use", "vb_files_path", "data_files_path"))
+clusterEvalQ(clust, {
+  print(sessionInfo())
+  library(hBayesDM)
+  library(rstan)
+  library(tidyverse)
+  library(readxl)
+  
+  # all my functions:
+  source(paste0(vb_files_path, "estimating_parms_functions.R"))
+})
+
+# distribute tasks across the clusters of different files
+# https://www.statswithr.com/r-functions/the-parsapply-function-in-r
+parLapply(clust, file_to_use, function(f) run_MCMC_function(vb_files_path, data_files_path, f))
+
+# Close the cluster
+stopCluster(clust)
+```
+
+
+# Extract Best MCMC Runs
+As MCMC runs have different starting points, some might not have the best results. This function filters to the best results and saves them in a new folder called "summary".
+```{r pull_best_mcmc_runs}
+MCMC_best_pull_function(vb_files_path, 7) # num_of_indiv = 7 in this case
+```
+
+
+# Run stabilizing loops of various VB runs:
+
+```{r vb_run1}
+individuals_string_with_space = '1 2 3 4 5 6 7' 
+N_indivs <- 7
+run_1 <- mcmc_vb_difference_loop_function(mcmc_summary_path, data_files_path, vb_files_path, individuals_string_with_space, N_indivs, passable_percent = 0.1)
+run_1
+```
+
+
+
+
+
+
+
+
+
+
+
