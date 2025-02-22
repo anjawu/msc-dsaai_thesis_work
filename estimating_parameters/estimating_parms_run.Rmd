@@ -1,0 +1,195 @@
+---
+title: "Estimating Parameter Updates"
+output: html_document
+date: "2025-02-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Import Functions
+```{r variables_and_import_functions}
+## Global Pathways ##
+thesis_path = "/Users/anjawu/Code/msc_dssai_thesis/"
+est_files_path = paste0(thesis_path, "estimating_parameters/")
+individual_results_path = paste0(thesis_path, "individuals/")
+data_files_path = paste0(individual_results_path, "results_combined_text_files/")
+
+# all model names
+model_names <- c("vpp", "orl", "pvl_delta")
+
+source(paste0(est_files_path, "estimating_parms_functions.R"))
+```
+
+
+# Run MCMC based on Data
+All the IGT results must be run through MCMC to get the initial estimates of the population-level and individual-level parameters. This can be done with a single file, or can be parallelized to complete many files - this is for use cases of wanted to compare placements across different groupings. 
+
+The results are saved in a folder "MCMC_output".
+
+## Single file run:
+```{r single_mcmc_run}
+### This is the original run for just one file:
+file_name = "results_individuals_1-2-3-4-5-6-7.txt"
+# Run just for one file:
+run_MCMC_function(est_files_path, data_files_path, file_name)
+```
+
+## Multiple file runs:
+```{r parallel_mcmc_runs_all_combos}
+### This is a parallel process for doing all possible combinations of individuals (1-7)
+# create automated process that takes in the folder location of results and takes all .txt files and inputs those as file_names in the above function:
+file_to_use = list.files(paste0(est_files_path, data_files_path), full.names = FALSE)
+print(file_to_use)
+
+# Setting up CPU clustering: using https://gradientdescending.com/simple-parallel-processing-in-r/ and https://stackoverflow.com/questions/17196261/understanding-the-differences-between-mclapply-and-parlapply-in-r
+num_cores <- 12
+clust <- makeCluster(num_cores)
+clusterExport(clust, varlist = c("file_to_use", "est_files_path", "data_files_path"))
+clusterEvalQ(clust, {
+  print(sessionInfo())
+  devtools::load_all('/home/anjawu/thesis_work/hBayesDM/R') # on server
+  library(hBayesDM)
+  library(rstan)
+  library(tidyverse)
+  library(readxl)
+  
+  # all my functions:
+  source(paste0(est_files_path, "estimating_parms_functions.R"))
+})
+
+# distribute tasks across the clusters of different files
+# https://www.statswithr.com/r-functions/the-parsapply-function-in-r
+parLapply(clust, file_to_use, function(f) run_MCMC_function(est_files_path, data_files_path, f))
+
+# Close the cluster
+stopCluster(clust)
+```
+
+
+# Extract Best MCMC Runs
+As MCMC runs have different starting points, some might not have the best results. This function filters to the best results and saves them in a new folder called "summary".
+```{r pull_best_mcmc_runs}
+MCMC_best_pull_function(est_files_path, 7) # num_of_indiv = 7 in this case
+```
+
+
+# Importing Data
+After the MCMC has been complete and best results have been pulled, the data is pulled and saved in variable "model_mcmc_results".
+```{r mcmc_import_results}
+### Read in all model MCMC outputs ###
+model_mcmc_results <- list()
+
+# This is specific for individuals 1234567 as sample:
+for (m in 1:length(model_names)) {
+  model_mcmc_results[[paste0(model_names[m], "_top15")]]  <- readRDS(file = paste0(est_files_path, "MCMC_output/summary/merged_output_from_BEST_igt_subgroup_1234567_igt_", model_names[m], "_sigmainvgam_top15.rds"))
+}
+```
+
+
+# Store all results in one DF
+In order to combine the MCMC results with the model information, such as priors and the estimates from the MCMC, a new object has been created "model_results".
+```{r create}
+# Create object to store all important 
+model_results <- list()
+
+# link parameter count with the model_names
+for (m in 1:length(model_names)) {
+  model <- model_names[m]
+  model_results[[model]]$parameter_count <- length((model_mcmc_results[[paste0(model, "_top15")]]$allIndPars)[,-1])
+}
+```
+
+
+## Add Priors
+The priors are in the STAN documentation of hBayesDM, however, from the paper it can be seen that the priors of the population-variance have been changed to be distributed as Inverse Gamma. This is to replace the Half-Normal and Half-Cauchy distributions. To ensure correct calculations of the new IG(a,b) distribution, the "model_priors_function()" needs to take the original variance of the two distributions. From the paper, it can be seen Half-Normal "sigma" was $0.2$ and Half-Cauchy distribution was changed to Half-Normal with "sigma" of $100$.
+```{r priors_dataframe}
+# half-normal sigma is 0.2 and half-cauchy sigma is 100 by our definition
+model_results <- model_priors_function(model_results, 0.2, 100) 
+```
+
+## Add Population-level and Individual-level Information from MCMC results
+Combining the results from the MCMC to have easy access to all parameter estimates (both individual-level and population-level)
+```{r collect_all_mcmc_results_into_one}
+model_results <- mcmc_results_amalgamation_function(model_mcmc_results, model_results)
+```
+
+
+# Placement of BIC in Initial Results
+Within the paper, it can be seen that the estimation loop begins with the placement of individuals based on the best fitting model using BIC calculations from the MCMC results. This section translates that into code.
+```{r initial_best_fit_bic}
+initial_best_fit_set <- list(vpp = c(), orl = c(), pvl_delta = c())
+num_of_individuals <- model_results$vpp$total_individuals
+# must compare row by row:
+for (indiv in 1:num_of_individuals) {
+  # compare columns: vpp_BIC, orl_BIC, pvl_delta_BIC for lowest value:
+  vpp_bic <- model_results$vpp$individual$criterion['bic'][indiv,]
+  orl_bic <- model_results$orl$individual$criterion['bic'][indiv,]
+  pvl_delta_bic <- model_results$pvl_delta$individual$criterion['bic'][indiv,]
+  ## find model with smallest bic:
+  bic_min_index <- which.min(c(vpp_bic, orl_bic, pvl_delta_bic))
+  ## find model name that has the lowest bic:
+  lowest_bic_model_name <- names(model_results)[bic_min_index]
+  
+  ## initial_best_fit_set$vpp # has list of all individual parameters that are the best for vpp
+  ## initial_best_fit_set$orl # has list of all individual parameters that are the best for orl
+  ## initial_best_fit_set$pvl_delta # has list of all individual parameters that are the best for pvl_delta
+  initial_best_fit_set[[lowest_bic_model_name]] <- c(initial_best_fit_set[[lowest_bic_model_name]], indiv)
+}
+initial_best_fit_set
+```
+
+# Stabilizing Loop
+This section looks to create a loop to find convergence of the estimates of population- and individual-level parameters after new placement of individuals.
+```{r stabilizing_loop}
+best_fit_set <- initial_best_fit_set
+
+# instantiate original values:
+old_population <- model_results
+
+# Create loop to cycle until population difference stabilizes
+i <- 1
+max_difference <- 1
+max_iterations <- 10000
+
+while (!is.na(max_difference) && max_difference > 0.001 && i < max_iterations) { # takes 314 for 0.01 and 598 for 0.001
+  print('__________________________________________________________________________')
+  print(paste0('Loop #', i))
+  # df for storing model parameter differences
+  differences_stored <- data.frame()
+  
+  new_population_step1 <- population_updating_fn(old_population, best_fit_set)
+  new_population <- individual_updating_fn(old_population, best_fit_set, new_population_step1)
+  
+    # must cycle through each model/parameter:
+  for (model in names(model_results)) { 
+    print("-------------------------------------------------------------")
+    print(model)
+    for (parameter in colnames(model_results[[model]]$prior)) {
+      print(parameter)
+      # get old and updated parameter values for each parameter
+      old_parameter_values <- old_population[[model]]$population_results['mean', parameter]
+      new_parameter_values <- new_population[[model]]$population_results['mean', parameter]
+
+      # Calculate the difference between old and updated values
+      value_difference <- abs(old_parameter_values - new_parameter_values)
+      row_value_difference <- data.frame(paste0(model, "_", parameter), value_difference)
+      names(row_value_difference) <- c("parameter", "difference")
+      
+      differences_stored <- rbind(differences_stored, row_value_difference)
+    }
+  }
+  # select max difference and treat that as the one that needs to stabilize
+  max_difference <- round(max(differences_stored$difference), 3)
+  old_population <- new_population
+  
+  i = i+1
+  if (i == max_iterations) {
+    print("Max number of iteration surpassed")
+  }
+  print(paste0("Loop #", i, " gives maximum difference of: ", max_difference))
+}
+```
+
+
