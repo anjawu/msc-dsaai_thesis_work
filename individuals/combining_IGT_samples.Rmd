@@ -1,0 +1,45 @@
+---
+title: "Combining IGT Samples"
+output: html_document
+date: "2024-12-12"
+---
+
+Create text files with every combination of individuals as separate documents. The files names will follow the following format:
+"results_individuals_1-2-3-4-5-6-7.txt".
+
+```{r}
+individual_path = '/Users/anjawu/Code/msc_dssai_thesis/individuals/'
+path_to_results = paste0(individual_path, 'individual_results/')
+
+participant_names = list('1', '2', '3', '4', '5', '6', '7')
+cols = list('seconds', 'choice', 'binary_gain_loss', 'start_amount', 'end_amount', 'gain', 'loss')
+
+for (i in 1:length(participant_names)){
+  temp_df <- read.csv(paste0(path_to_results, 'IGT_', participant_names[i], '_results.csv'), header=F)
+  colnames(temp_df) <- cols
+  temp_df$subjID <- i
+  temp_df <- temp_df[, c("subjID", "choice", "gain", "loss")]
+  
+  assign(paste0('subjID_', i), temp_df) 
+}
+
+participant_numbers <- 1:length(participant_names)
+
+combinations <- unlist(lapply(1:length(participant_names), function(n) combn(participant_numbers, n, simplify = FALSE)), recursive = FALSE)
+
+# Loop over each combination and save the results
+for (combo in combinations) {
+  # Merge data frames for the participants in the current combination
+  dfs_to_merge <- lapply(combo, function(id) get(paste0('subjID_', id)))
+  
+  # Merge the data frames by rows
+  combined_df <- do.call(rbind, dfs_to_merge)
+  
+  # Generate the file name based on the combination
+  file_name <- paste0(individual_path, "results_combined_text_files/results_individuals_", paste(combo, collapse = "-"), ".txt")
+  
+  # Write the combined data frame to a .txt file
+  write.table(combined_df, file = file_name, row.names = FALSE, sep = "\t", quote = FALSE)
+}
+```
+
