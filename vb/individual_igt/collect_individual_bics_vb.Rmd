@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(MASS) 
 library(reshape2) 
 
-vb_files_path = "/Users/anjawu/Code/msc_dssai_thesis/vb/"
+vb_files_path = "/Users/anjawu/Code/msc-dsaai_thesis_work/vb/"
 summary_path = paste0(vb_files_path, 'MCMC_output/summary/')
 
 model_names <- c('pvl_delta', 'orl', 'vpp')
